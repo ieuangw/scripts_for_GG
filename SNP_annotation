@@ -1,0 +1,98 @@
+# Preliminaries
+library(tidyverse)
+library(VariantAnnotation)
+library(Rsamtools)
+library(GenomicFeatures)
+library(biomaRt)
+library(rtracklayer)
+library(trackViewer)
+source("../utilis.R")
+VCFFOLDER = "/Volumes/DLBCL_data/VCF2_index"
+SGK1_REGION = c(134169246, 134318112)
+REFGENOME = "/Users/ieuanwalker/Documents/Hodson_Project/SGK1/hg38.fa"
+GTF = "/Users/ieuanwalker/Documents/Hodson_Project/SGK1/gencode.v28.annotation.gtf"
+SGK1_ENSEMBL<-  "ENST00000367858.9"
+source("/Users/ieuanwalker/Documents/Hodson_Project/SGK1/utlities.R")
+
+# Make SGK1 model
+SGK1 <- GRanges("chr6", IRanges(start = SGK1_REGION[1],
+                              end = SGK1_REGION[2]))
+# Load annotations
+txdb <- makeTxDbFromGFF(GTF, "gtf", organism = "Homo sapiens")
+genome <- FaFile(REFGENOME, index=sprintf("%s.fai", REFGENOME))
+whitelist <- read_csv(WHITELIST)
+DDX3X_regions <- read_csv(DDX3X_REGIONS)
+
+# Compress and index VCF files
+
+```{terminal}
+conda activate 
+cd /Volumes/DLBCL_data/VCF2_index 
+  ls *.vcf | parallel "bgzip < {} > {}.gz && tabix {}.gz"
+```
+
+# Select SGK1 variants and predict consequences  
+
+# List VCF files
+files <- list.files("/Volumes/DLBCL_data/VCF2_index", "*.vcf.gz$", full.names = T)
+# Iterate through vcf files
+SGK1mut <- list()
+SGK1status <- data.frame(sampleID = c(),
+                       SGK1mut_any = c())
+SGK1loc <- GRanges()
+SGK1conseq <- GRanges()
+n <- 1
+for (i in 1:length(files)){
+  tab <- TabixFile(files[i])
+  vcf <- readVcf(tab, "hg38")
+  chroms <- as.character(unique(seqnames(rowRanges(vcf))))
+  sampleName <- splitvec(splitvec(files[i], "/", 5), "_", 1)
+  
+  if("chr6" %in% chroms){
+    vcf <- readVcf(tab, "hg38", param = SGK1)
+    
+    if(length(rowRanges(vcf)) > 0){
+      #Save vcf
+      SGK1mut[[n]] <- vcf
+      SGK1status[i,1] <- sampleName
+      SGK1status[i,2] <- "VAR"
+      
+      # Extract Variants depth
+      snpMatrix <- genotypeToSnpMatrix(vcf, uncertain = F)
+      
+      # Predict consequences and save GRanges objects
+      object <- rowRanges(vcf)
+      object$SAMPLE <- sampleName
+      object$depthREF <- unlist(lapply(geno(vcf)$AD, function(x){x[1]}))
+      object$depthALT <- unlist(lapply(geno(vcf)$AD, function(x){x[2]}))
+      refallele <- ref(vcf)
+      altallele <- alt(vcf)
+      eltROWS <- elementNROWS(altallele)
+      rd_exp <- rep(object, eltROWS)
+      coding <- predictCoding(object, txdb, seqSource=genome, unlist(altallele))
+      
+      SGK1loc <- append(SGK1loc, object)
+      SGK1conseq <- append(SGK1conseq, coding)
+      n <- n +1
+      
+    } else {
+      SGK1status[i,1] <- sampleName
+      SGK1status[i,2] <- "WT"
+      
+    }
+  }
+}
+save(SGK1mut, SGK1status, SGK1loc, SGK1conseq, file = "sgk1mutation.RData")
+
+#Collapse all samples to one GRanges object 
+names(SGK1conseq) <- paste(names(SGK1conseq), 1:length(SGK1conseq), sep = "_")
+SGK1conseq_tab <- as.data.frame(SGK1conseq)
+txTab <- transcripts(txdb) %>% as.data.frame()
+SGK1conseq_tabClean <- SGK1conseq_tab %>% 
+  mutate(ensembl_transcript = txTab$tx_name[match(TXID, txTab$tx_id)]) %>%
+  filter(ensembl_transcript == SGK1_ENSEMBL) %>%
+  dplyr::select(GENEID, seqnames, start, end, SAMPLE, QUAL, FILTER, REF, varAllele, 
+                ensembl_transcript, CONSEQUENCE, REFCODON, VARCODON, REFAA, VARAA, CDSLOC.start, CDSLOC.end, PROTEINLOC, 
+                depthREF, depthALT)
+write_csv(SGK1conseq_tabClean, "/Users/ieuanwalker/Documents/Hodson_Project/SGK1/SGK1_mutations.csv")
+```
