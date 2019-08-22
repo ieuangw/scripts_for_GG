@@ -1,0 +1,22 @@
+#################################
+#Chaning Hg19 to Hg38############
+
+# Problem: Dan's whitelist is aligned to Hg19, but our VCF files are aligned to the newer Hg38, therefore we want to convert the two
+#Bioconductor has liftover which allows us to do this.
+library(liftOver)
+library(GenomicFeatures)
+library(rtracklayer)
+
+#Set working directory 
+wd<- "/home/igw24/Documents/SGK1_data"
+setwd(wd)
+#########
+
+#firstly we need to make a gRanges object containng all the SNP locations. 
+whitelist<- read_csv("SGK1_whitelist.csv")
+SGK1.whitelist.granges<- function(x){
+                                  SGK1snps<- GRanges( seqnames= "chr6", ranges= IRanges(start = x$Pos, width =1))
+                                  values(SGK1snps)<- x$Sample
+                                  head(SGK1snps)}
+
+SGK1.hg19.granges<- SGK1.whitelist.granges(whitelist)
